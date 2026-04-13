@@ -28,26 +28,25 @@ logger = logging.getLogger(__name__)
 TELEGRAM_API = "https://api.telegram.org/bot{token}/sendMessage"
 
 
+def _escape_md(text: str) -> str:
+    """Escape characters that break Telegram MarkdownV2."""
+    for ch in r"\_*[]()~`>#+-=|{}.!":
+        text = text.replace(ch, f"\\{ch}")
+    return text
+
+
 def _format_lead_message(lead: dict, index: int, total: int) -> str:
-    """Format a single lead into a readable notification message."""
-    return f"""
-🎯 *Lead {index}/{total} — @{lead['username']}*
-
-📝 *Post:*
-{lead['text'][:500]}{'...' if len(lead['text']) > 500 else ''}
-
-🔗 {lead['url']}
-
-🤖 *AI Reason:* {lead['ai_reason']}
-
-💬 *Reply A (Public Comment):*
-{lead['reply_a']}
-
-📩 *Reply B (DM):*
-{lead['reply_b']}
-
-👥 Followers: {lead.get('followers', 'N/A')}
-""".strip()
+    """Format a single lead into a readable Telegram MarkdownV2 message."""
+    post_text = lead['text'][:400] + ('…' if len(lead['text']) > 400 else '')
+    return (
+        f"🎯 *Lead {index}/{total} — @{_escape_md(lead['username'])}*\n\n"
+        f"📝 *Post:*\n{_escape_md(post_text)}\n\n"
+        f"🔗 {_escape_md(lead['url'])}\n\n"
+        f"🤖 *AI Reason:* {_escape_md(lead['ai_reason'])}\n\n"
+        f"💬 *Reply A \\(Public\\):*\n{_escape_md(lead['reply_a'])}\n\n"
+        f"📩 *Reply B \\(DM\\):*\n{_escape_md(lead['reply_b'])}\n\n"
+        f"👥 Followers: {lead.get('followers', 'N/A')}"
+    )
 
 
 def _send_telegram(message: str) -> bool:
@@ -65,8 +64,8 @@ def _send_telegram(message: str) -> bool:
             json={
                 "chat_id": chat_id,
                 "text": message,
-                "parse_mode": "Markdown",
-                "disable_web_page_preview": False,
+                "parse_mode": "MarkdownV2",
+                "disable_web_page_preview": True,
             },
             timeout=15,
         )
@@ -137,6 +136,6 @@ def notify_leads(leads: list[dict]) -> None:
 
 def notify_summary(leads_count: int, posts_checked: int) -> None:
     """Send a brief run summary (useful for debugging/monitoring)."""
-    msg = f"X Scraper run complete: checked {posts_checked} posts, found {leads_count} new lead(s)."
+    msg = _escape_md(f"X Scraper run complete: checked {posts_checked} posts, found {leads_count} new lead(s).")
     if leads_count == 0:
         _send_telegram(f"ℹ️ {msg}")
