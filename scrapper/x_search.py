@@ -1,12 +1,18 @@
 """
-X (Twitter) scraper — uses X Premium cookies + internal GraphQL API.
-No official API key required. Uses httpx for async-capable HTTP.
+X (Twitter) scraper — uses X Premium cookies + internal search API.
+No official API key required.
 
 HOW TO GET YOUR X COOKIES (Chrome DevTools):
-1. Open Chrome and go to https://x.com
-2. Press F12 → Application tab → Cookies → https://x.com
-3. Copy the values for: auth_token, ct0, guest_id, twid
-4. Put them in your .env file as X_AUTH_TOKEN, X_CT0, X_GUEST_ID, X_TWID
+1. Open Chrome and go to https://x.com and log in
+2. Press F12 → Network tab → search for "SearchTimeline" in filter
+3. OR: Application tab → Cookies → https://x.com
+4. Copy: auth_token, ct0, guest_id, twid into your .env file
+
+HOW TO FIND THE CURRENT GRAPHQL HASH (if 404 happens again):
+1. Open Chrome → go to x.com → search anything in the search bar
+2. Press F12 → Network tab → filter by "SearchTimeline"
+3. Click the request → copy the URL path hash (the part after /graphql/)
+4. Update GRAPHQL_HASH below
 """
 
 import os
@@ -15,20 +21,25 @@ import time
 import random
 import logging
 import httpx
-from typing import Optional
 
 logger = logging.getLogger(__name__)
 
-# Advanced search query targeting genuine hiring intent for web developers
+# Advanced search query targeting genuine hiring intent for web/AI developers
 SEARCH_QUERY = (
     '("hiring" OR "looking for" OR "need a" OR "recommend" OR "freelance" OR '
-    '"build me" OR "website" OR "help me build") '
+    '"build me" OR "help me build") '
     '("web developer" OR "web dev" OR "frontend developer" OR "full stack" OR '
-    '"react developer" OR "next.js developer" OR "nextjs" OR "mongodb") '
+    '"react developer" OR "next.js" OR "nextjs" OR "AI developer" OR "python developer") '
     '-is:retweet lang:en'
 )
 
-GRAPHQL_SEARCH_URL = "https://x.com/i/api/graphql/nK1dw4oV3k4w5TdtcAdSww/SearchTimeline"
+# X internal GraphQL hash — update this if you get 404 errors
+# To find current hash: Chrome DevTools → Network → filter "SearchTimeline" → copy URL hash
+GRAPHQL_HASH = "UnbCnoTWeQos8UMxaSATiA"
+GRAPHQL_SEARCH_URL = f"https://x.com/i/api/graphql/{GRAPHQL_HASH}/SearchTimeline"
+
+# Stable bearer token (same for all X web clients)
+BEARER_TOKEN = "AAAAAAAAAAAAAAAAAAAAANRILgAAAAAAnNwIzUejRCOuH5E6I8xnZz4puTs%3D1Zv7ttfk8LF81IUq16cHjhLTvJu4FA33AGWWjCpTnA"
 
 FEATURES = {
     "rweb_tipjar_consumption_enabled": True,
@@ -56,9 +67,15 @@ FEATURES = {
     "responsive_web_enhance_cards_enabled": False,
 }
 
+FIELD_TOGGLES = {
+    "withArticleRichContentState": True,
+    "withArticlePlainText": False,
+    "withGrokAnalyze": False,
+    "withDisallowedReplyControls": False,
+}
+
 
 def _build_headers() -> dict:
-    """Build request headers using X cookies from environment."""
     auth_token = os.environ["X_AUTH_TOKEN"]
     ct0 = os.environ["X_CT0"]
     guest_id = os.environ.get("X_GUEST_ID", "")
@@ -71,7 +88,7 @@ def _build_headers() -> dict:
         cookie_parts.append(f"twid={twid}")
 
     return {
-        "authorization": "Bearer AAAAAAAAAAAAAAAAAAAAANRILgAAAAAAnNwIzUejRCOuH5E6I8xnZz4puTs%3D1Zv7ttfk8LF81IUq16cHjhLTvJu4FA33AGWWjCpTnA",
+        "authorization": f"Bearer {BEARER_TOKEN}",
         "x-csrf-token": ct0,
         "cookie": "; ".join(cookie_parts),
         "content-type": "application/json",
@@ -79,13 +96,16 @@ def _build_headers() -> dict:
         "x-twitter-active-user": "yes",
         "x-twitter-auth-type": "OAuth2Session",
         "x-twitter-client-language": "en",
+        "accept": "*/*",
         "accept-language": "en-US,en;q=0.9",
-        "referer": "https://x.com/search",
+        "referer": "https://x.com/search?q=hiring+web+developer&src=typed_query&f=live",
+        "sec-fetch-dest": "empty",
+        "sec-fetch-mode": "cors",
+        "sec-fetch-site": "same-origin",
     }
 
 
 def _extract_posts(response_data: dict) -> list[dict]:
-    """Parse GraphQL response and extract post objects."""
     posts = []
     try:
         instructions = (
@@ -110,7 +130,6 @@ def _extract_posts(response_data: dict) -> list[dict]:
                 if not tweet_result:
                     continue
 
-                # Handle retweet wrapper
                 if tweet_result.get("__typename") == "TweetWithVisibilityResults":
                     tweet_result = tweet_result.get("tweet", tweet_result)
 
@@ -121,8 +140,6 @@ def _extract_posts(response_data: dict) -> list[dict]:
 
                 if not legacy_tweet or not legacy_user:
                     continue
-
-                # Skip retweets
                 if legacy_tweet.get("retweeted_status_result"):
                     continue
 
@@ -146,11 +163,41 @@ def _extract_posts(response_data: dict) -> list[dict]:
     return posts
 
 
+def _get_current_graphql_hash(headers: dict) -> str | None:
+    """
+    Auto-discover the current SearchTimeline GraphQL hash from X's main JS bundle.
+    Falls back to None if it can't find it.
+    """
+    try:
+        resp = httpx.get(
+            "https://x.com/search?q=hiring+developer&src=typed_query&f=live",
+            headers={
+                "user-agent": headers["user-agent"],
+                "cookie": headers["cookie"],
+                "authorization": headers["authorization"],
+            },
+            timeout=15,
+            follow_redirects=True,
+        )
+        # Look for the hash in the HTML (X embeds it in script tags)
+        import re
+        match = re.search(r'"SearchTimeline"\s*:\s*"([a-zA-Z0-9_-]{20,})"', resp.text)
+        if match:
+            found = match.group(1)
+            logger.info(f"Auto-discovered GraphQL hash: {found}")
+            return found
+    except Exception as e:
+        logger.warning(f"Hash auto-discovery failed: {e}")
+    return None
+
+
 def search_x(max_results: int = 25) -> list[dict]:
     """
-    Search X for hiring-intent posts targeting web developers.
-    Returns list of post dicts. Raises on auth failure.
+    Search X for hiring-intent posts. Returns list of post dicts.
+    Auto-retries with hash discovery if GraphQL endpoint returns 404.
     """
+    headers = _build_headers()
+
     params = {
         "variables": json.dumps({
             "rawQuery": SEARCH_QUERY,
@@ -159,26 +206,38 @@ def search_x(max_results: int = 25) -> list[dict]:
             "product": "Latest",
         }),
         "features": json.dumps(FEATURES),
+        "fieldToggles": json.dumps(FIELD_TOGGLES),
     }
 
-    headers = _build_headers()
+    time.sleep(random.uniform(2, 4))
 
-    # Random delay to appear natural
-    time.sleep(random.uniform(2, 5))
+    with httpx.Client(timeout=40) as client:
+        search_url = GRAPHQL_SEARCH_URL
 
-    with httpx.Client(timeout=30) as client:
         try:
-            response = client.get(
-                GRAPHQL_SEARCH_URL,
-                params=params,
-                headers=headers,
-                follow_redirects=True,
-            )
+            response = client.get(search_url, params=params, headers=headers, follow_redirects=True)
+
+            # If 404, try to auto-discover the new hash
+            if response.status_code == 404:
+                logger.warning("GraphQL 404 — attempting hash auto-discovery")
+                new_hash = _get_current_graphql_hash(headers)
+                if new_hash:
+                    search_url = f"https://x.com/i/api/graphql/{new_hash}/SearchTimeline"
+                    time.sleep(random.uniform(1, 3))
+                    response = client.get(search_url, params=params, headers=headers, follow_redirects=True)
+                else:
+                    raise ValueError(
+                        "X GraphQL endpoint changed (404). "
+                        "Open Chrome → x.com → search anything → F12 Network tab → "
+                        "filter 'SearchTimeline' → copy the hash from the URL → "
+                        "update GRAPHQL_HASH in scrapper/x_search.py"
+                    )
 
             if response.status_code == 401:
-                raise ValueError("X auth failed — check your X_AUTH_TOKEN and X_CT0 cookies")
+                raise ValueError("X auth failed — refresh your X cookies in Vercel env vars")
             if response.status_code == 429:
-                raise ValueError("X rate limit hit — wait before retrying")
+                raise ValueError("X rate limit hit — reduce MAX_RESULTS or increase interval")
+
             response.raise_for_status()
 
             data = response.json()
@@ -187,7 +246,7 @@ def search_x(max_results: int = 25) -> list[dict]:
             return posts
 
         except httpx.HTTPStatusError as e:
-            logger.error(f"HTTP error from X: {e.response.status_code} — {e.response.text[:200]}")
+            logger.error(f"HTTP error from X: {e.response.status_code} — {e.response.text[:300]}")
             raise
         except Exception as e:
             logger.error(f"X search error: {e}")
