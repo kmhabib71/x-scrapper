@@ -141,6 +141,117 @@ async def get_stats():
         raise HTTPException(status_code=500, detail=str(e))
 
 
+# ─── Debug endpoint — shows raw X API response ───────────────────────────────
+
+@app.get("/api/debug")
+async def debug_x(request: Request):
+    """Hits X directly and returns the raw status + response so we can diagnose issues."""
+    cron_secret = os.environ.get("CRON_SECRET", "")
+    if cron_secret:
+        provided = request.headers.get("x-cron-secret", "")
+        if provided != cron_secret:
+            raise HTTPException(status_code=401, detail="Unauthorized")
+
+    import json as _json
+    import httpx as _httpx
+
+    auth_token = os.environ.get("X_AUTH_TOKEN", "")
+    ct0 = os.environ.get("X_CT0", "")
+    guest_id = os.environ.get("X_GUEST_ID", "")
+    twid = os.environ.get("X_TWID", "")
+
+    cookie_parts = [f"auth_token={auth_token}", f"ct0={ct0}"]
+    if guest_id:
+        cookie_parts.append(f"guest_id={guest_id}")
+    if twid:
+        cookie_parts.append(f"twid={twid}")
+
+    GRAPHQL_HASH = "pCd62NDD9dlCDgEGgEVHMg"
+    url = f"https://x.com/i/api/graphql/{GRAPHQL_HASH}/SearchTimeline"
+
+    features = {
+        "rweb_video_screen_enabled": False,
+        "profile_label_improvements_pcf_label_in_post_enabled": True,
+        "responsive_web_profile_redirect_enabled": False,
+        "rweb_tipjar_consumption_enabled": False,
+        "verified_phone_label_enabled": False,
+        "creator_subscriptions_tweet_preview_api_enabled": True,
+        "responsive_web_graphql_timeline_navigation_enabled": True,
+        "responsive_web_graphql_skip_user_profile_image_extensions_enabled": False,
+        "premium_content_api_read_enabled": False,
+        "communities_web_enable_tweet_community_results_fetch": True,
+        "c9s_tweet_anatomy_moderator_badge_enabled": True,
+        "responsive_web_grok_analyze_button_fetch_trends_enabled": False,
+        "responsive_web_grok_analyze_post_followups_enabled": True,
+        "responsive_web_jetfuel_frame": True,
+        "responsive_web_grok_share_attachment_enabled": True,
+        "responsive_web_grok_annotations_enabled": True,
+        "articles_preview_enabled": True,
+        "responsive_web_edit_tweet_api_enabled": True,
+        "graphql_is_translatable_rweb_tweet_is_translatable_enabled": True,
+        "view_counts_everywhere_api_enabled": True,
+        "longform_notetweets_consumption_enabled": True,
+        "responsive_web_twitter_article_tweet_consumption_enabled": True,
+        "content_disclosure_indicator_enabled": True,
+        "content_disclosure_ai_generated_indicator_enabled": True,
+        "responsive_web_grok_show_grok_translated_post": True,
+        "responsive_web_grok_analysis_button_from_backend": True,
+        "post_ctas_fetch_enabled": True,
+        "freedom_of_speech_not_reach_fetch_enabled": True,
+        "standardized_nudges_misinfo": True,
+        "tweet_with_visibility_results_prefer_gql_limited_actions_policy_enabled": True,
+        "longform_notetweets_rich_text_read_enabled": True,
+        "longform_notetweets_inline_media_enabled": False,
+        "responsive_web_grok_image_annotation_enabled": True,
+        "responsive_web_grok_imagine_annotation_enabled": True,
+        "responsive_web_grok_community_note_auto_translation_is_enabled": True,
+        "responsive_web_enhance_cards_enabled": False,
+    }
+
+    params = {
+        "variables": _json.dumps({
+            "rawQuery": "hiring web developer",
+            "count": 5,
+            "querySource": "typed_query",
+            "product": "Latest",
+        }),
+        "features": _json.dumps(features),
+    }
+
+    headers = {
+        "authorization": "Bearer AAAAAAAAAAAAAAAAAAAAANRILgAAAAAAnNwIzUejRCOuH5E6I8xnZz4puTs%3D1Zv7ttfk8LF81IUq16cHjhLTvJu4FA33AGWWjCpTnA",
+        "x-csrf-token": ct0,
+        "cookie": "; ".join(cookie_parts),
+        "user-agent": "Mozilla/5.0 (Linux; Android 6.0; Nexus 5 Build/MRA58N) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/147.0.0.0 Mobile Safari/537.36",
+        "x-twitter-active-user": "yes",
+        "x-twitter-auth-type": "OAuth2Session",
+        "x-twitter-client-language": "en",
+        "accept": "*/*",
+        "accept-language": "en-US,en;q=0.9",
+        "referer": "https://x.com/search?q=hiring+web+developer&src=typed_query&f=live",
+        "sec-fetch-dest": "empty",
+        "sec-fetch-mode": "cors",
+        "sec-fetch-site": "same-origin",
+        "content-type": "application/json",
+    }
+
+    try:
+        with _httpx.Client(timeout=20) as client:
+            resp = client.get(url, params=params, headers=headers, follow_redirects=True)
+            try:
+                body = resp.json()
+            except Exception:
+                body = resp.text[:500]
+            return JSONResponse({
+                "status_code": resp.status_code,
+                "hash_used": GRAPHQL_HASH,
+                "response_preview": body if isinstance(body, dict) else body,
+                "has_data": "data" in body if isinstance(body, dict) else False,
+            })
+    except Exception as e:
+        return JSONResponse({"error": str(e)}, status_code=500)
+
+
 # ─── Health ───────────────────────────────────────────────────────────────────
 
 @app.get("/api/health")
