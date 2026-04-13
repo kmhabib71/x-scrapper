@@ -217,12 +217,41 @@ def _get_current_graphql_hash(headers: dict) -> str | None:
     return None
 
 
+def _get_proxy() -> dict | None:
+    """
+    Build proxy config from env vars if set.
+    Supports any HTTP proxy — Webshare, Oxylabs, Brightdata, etc.
+
+    Set these env vars (from Webshare free tier):
+      PROXY_HOST     e.g. proxy.webshare.io
+      PROXY_PORT     e.g. 80
+      PROXY_USER     your proxy username
+      PROXY_PASS     your proxy password
+    """
+    host = os.environ.get("PROXY_HOST", "")
+    port = os.environ.get("PROXY_PORT", "80")
+    user = os.environ.get("PROXY_USER", "")
+    passwd = os.environ.get("PROXY_PASS", "")
+
+    if not host:
+        return None
+
+    if user and passwd:
+        proxy_url = f"http://{user}:{passwd}@{host}:{port}"
+    else:
+        proxy_url = f"http://{host}:{port}"
+
+    logger.info(f"Using proxy: {host}:{port}")
+    return {"http://": proxy_url, "https://": proxy_url}
+
+
 def search_x(max_results: int = 25) -> list[dict]:
     """
     Search X for hiring-intent posts. Returns list of post dicts.
-    Auto-retries with hash discovery if GraphQL endpoint returns 404.
+    Uses residential proxy if PROXY_HOST is set (required for cloud hosting).
     """
     headers = _build_headers()
+    proxy = _get_proxy()
 
     params = {
         "variables": json.dumps({
@@ -237,7 +266,11 @@ def search_x(max_results: int = 25) -> list[dict]:
 
     time.sleep(random.uniform(2, 4))
 
-    with httpx.Client(timeout=40) as client:
+    client_kwargs = {"timeout": 40}
+    if proxy:
+        client_kwargs["proxy"] = proxy
+
+    with httpx.Client(**client_kwargs) as client:
         search_url = GRAPHQL_SEARCH_URL
 
         try:
@@ -253,14 +286,12 @@ def search_x(max_results: int = 25) -> list[dict]:
                     response = client.get(search_url, params=params, headers=headers, follow_redirects=True)
                 else:
                     raise ValueError(
-                        "X GraphQL endpoint changed (404). "
-                        "Open Chrome → x.com → search anything → F12 Network tab → "
-                        "filter 'SearchTimeline' → copy the hash from the URL → "
-                        "update GRAPHQL_HASH in scrapper/x_search.py"
+                        "X is blocking this IP (404). Set PROXY_HOST/PROXY_USER/PROXY_PASS "
+                        "env vars with a residential proxy (Webshare free tier works)."
                     )
 
             if response.status_code == 401:
-                raise ValueError("X auth failed — refresh your X cookies in Vercel env vars")
+                raise ValueError("X auth failed — refresh your X cookies in env vars")
             if response.status_code == 429:
                 raise ValueError("X rate limit hit — reduce MAX_RESULTS or increase interval")
 
