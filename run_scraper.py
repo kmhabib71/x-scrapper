@@ -6,6 +6,11 @@ Uses the same scrapper modules as the Vercel API.
 import os
 import logging
 import sys
+from dotenv import load_dotenv
+
+# Load local credentials — works both locally (.env) and in CI (env vars already set)
+load_dotenv(".env")           # try .env first
+load_dotenv(".env.example")   # fallback to .env.example for local dev
 
 logging.basicConfig(
     level=logging.INFO,
