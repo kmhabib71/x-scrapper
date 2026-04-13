@@ -95,18 +95,26 @@ def _build_headers() -> dict:
     guest_id = os.environ.get("X_GUEST_ID", "")
     twid = os.environ.get("X_TWID", "")
 
-    cookie_parts = [f"auth_token={auth_token}", f"ct0={ct0}"]
-    if guest_id:
-        cookie_parts.append(f"guest_id={guest_id}")
-    if twid:
-        cookie_parts.append(f"twid={twid}")
+    # X_FULL_COOKIE: paste the entire cookie string from Chrome DevTools
+    # Network tab → any x.com request → Request Headers → cookie → copy full value
+    # This includes cf_clearance which helps bypass Cloudflare on server IPs
+    full_cookie = os.environ.get("X_FULL_COOKIE", "")
+    if full_cookie:
+        cookie_str = full_cookie
+    else:
+        cookie_parts = [f"auth_token={auth_token}", f"ct0={ct0}"]
+        if guest_id:
+            cookie_parts.append(f"guest_id={guest_id}")
+        if twid:
+            cookie_parts.append(f"twid={twid}")
+        cookie_str = "; ".join(cookie_parts)
 
     return {
         "authorization": f"Bearer {BEARER_TOKEN}",
         "x-csrf-token": ct0,
-        "cookie": "; ".join(cookie_parts),
+        "cookie": cookie_str,
         "content-type": "application/json",
-        "user-agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36",
+        "user-agent": "Mozilla/5.0 (Linux; Android 6.0; Nexus 5 Build/MRA58N) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/147.0.0.0 Mobile Safari/537.36",
         "x-twitter-active-user": "yes",
         "x-twitter-auth-type": "OAuth2Session",
         "x-twitter-client-language": "en",
@@ -116,6 +124,10 @@ def _build_headers() -> dict:
         "sec-fetch-dest": "empty",
         "sec-fetch-mode": "cors",
         "sec-fetch-site": "same-origin",
+        "sec-ch-ua": '"Google Chrome";v="147", "Not.A/Brand";v="8", "Chromium";v="147"',
+        "sec-ch-ua-mobile": "?1",
+        "sec-ch-ua-platform": '"Android"',
+        "priority": "u=1, i",
     }
 
 
