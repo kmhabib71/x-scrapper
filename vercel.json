@@ -8,6 +8,10 @@
   ],
   "routes": [
     {
+      "src": "/",
+      "dest": "api/scrape.py"
+    },
+    {
       "src": "/api/(.*)",
       "dest": "api/scrape.py"
     }

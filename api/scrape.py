@@ -39,6 +39,11 @@ logger = logging.getLogger(__name__)
 app = FastAPI(title="X Scraper API", version="1.0.0")
 
 
+@app.get("/")
+async def root():
+    return {"status": "X Scraper is running", "endpoints": ["/api/health", "/api/scrape"]}
+
+
 @app.get("/api/scrape")
 async def scrape_endpoint(request: Request):
     """
